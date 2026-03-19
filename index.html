@@ -1,134 +1,130 @@
-<div id="hud">Tap to set Vertex</div>
+const video = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const hud = document.getElementById('hud');
 
-<div id="ui">
-    <button class="btn" onclick="handleAction()">Next Step</button>
-    <button class="btn" style="background: #2196F3; color: white;" onclick="takeScreenshot()">📸 Save</button>
-    <button class="btn" style="background: rgba(255,0,0,0.6); color: white;" onclick="reset()">Reset</button>
-</div>
+let step = 0; 
+let vertex = null;
+let baseline = null;
+let currentAngle = 0;
 
-<script>
-    const video = document.getElementById('video');
-    const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d');
-    const hud = document.getElementById('hud');
-
-    let step = 0; 
-    let vertex = null;
-    let baseline = null;
-
-    async function startCamera() {
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({ 
-                video: { facingMode: "environment", width: { ideal: 1920 }, height: { ideal: 1080 } }, 
-                audio: false 
-            });
-            video.srcObject = stream;
-        } catch (err) {
-            alert("Camera error: " + err);
-        }
+// 1. Better Camera Initialization
+async function startCamera() {
+    const constraints = {
+        video: { facingMode: "environment" },
+        audio: false
+    };
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        video.srcObject = stream;
+        video.setAttribute("playsinline", true); // Required for iOS Safari
+        video.play();
+    } catch (err) {
+        hud.innerText = "Error: Please allow camera access.";
+        console.error(err);
     }
+}
 
-    function resize() {
-        canvas.width = window.innerWidth;
-        canvas.height = window.innerHeight;
+function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+}
+
+// 2. The Logic Fix: Capturing the point
+function handleAction() {
+    // We use the exact center of the screen as our pointer
+    const centerX = window.innerWidth / 2;
+    const centerY = window.innerHeight / 2;
+
+    if (step === 0) {
+        vertex = { x: centerX, y: centerY };
+        step = 1;
+        hud.innerHTML = "Step 1: Vertex Set ✅<br>Aim at 0° line & tap Next";
+    } else if (step === 1) {
+        baseline = { x: centerX, y: centerY };
+        step = 2;
+        hud.style.color = "#4CAF50"; // Green for active measuring
     }
+}
 
-    function handleAction() {
-        const centerX = window.innerWidth / 2;
-        const centerY = window.innerHeight / 2;
-        if (step === 0) {
-            vertex = { x: centerX, y: centerY };
-            step = 1;
-            hud.innerText = "Aim at 0° line & tap Next";
-        } else if (step === 1) {
-            baseline = { x: centerX, y: centerY };
-            step = 2;
-            hud.innerText = "Measuring...";
-        }
-    }
+function reset() {
+    step = 0; vertex = null; baseline = null;
+    hud.style.color = "white";
+    hud.innerText = "Aim at Corner & tap Next";
+}
 
-    function reset() {
-        step = 0; vertex = null; baseline = null;
-        hud.innerText = "Tap to set Vertex";
-    }
+function takeScreenshot() {
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = canvas.width;
+    tempCanvas.height = canvas.height;
+    const tempCtx = tempCanvas.getContext('2d');
+    tempCtx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    tempCtx.drawImage(canvas, 0, 0);
+    const link = document.createElement('a');
+    link.download = `angle-${Math.round(currentAngle)}deg.png`;
+    link.href = tempCanvas.toDataURL('image/png');
+    link.click();
+}
 
-    // --- NEW: Screenshot Logic ---
-    function takeScreenshot() {
-        // 1. Create a temporary canvas to merge video + overlays
-        const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = canvas.width;
-        tempCanvas.height = canvas.height;
-        const tempCtx = tempCanvas.getContext('2d');
+// 3. The Drawing Loop (The "Engine")
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const centerX = window.innerWidth / 2;
+    const centerY = window.innerHeight / 2;
 
-        // 2. Draw the current video frame first
-        tempCtx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        
-        // 3. Draw the measurement graphics on top
-        tempCtx.drawImage(canvas, 0, 0);
+    if (vertex) {
+        // Draw Vertex Dot
+        ctx.fillStyle = "#ff0000";
+        ctx.beginPath();
+        ctx.arc(vertex.x, vertex.y, 10, 0, Math.PI * 2);
+        ctx.fill();
 
-        // 4. Download as image
-        const link = document.createElement('a');
-        link.download = `measurement-${Math.floor(Date.now()/1000)}.png`;
-        link.href = tempCanvas.toDataURL('image/png');
-        link.click();
-    }
+        // Draw Line from Vertex to Center (The "Measuring" line)
+        ctx.strokeStyle = "#ffff00";
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.moveTo(vertex.x, vertex.y);
+        ctx.lineTo(centerX, centerY);
+        ctx.stroke();
 
-    function draw() {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        const centerX = window.innerWidth / 2;
-        const centerY = window.innerHeight / 2;
-
-        if (vertex) {
-            ctx.lineWidth = 3;
-            // Draw Vertex
-            ctx.fillStyle = "red";
-            ctx.beginPath();
-            ctx.arc(vertex.x, vertex.y, 8, 0, Math.PI * 2);
-            ctx.fill();
-
-            // Draw Active Line
-            ctx.strokeStyle = "yellow";
+        if (baseline) {
+            // Draw the fixed Baseline
+            ctx.strokeStyle = "white";
+            ctx.setLineDash([10, 5]);
             ctx.beginPath();
             ctx.moveTo(vertex.x, vertex.y);
-            ctx.lineTo(centerX, centerY);
+            ctx.lineTo(baseline.x, baseline.y);
             ctx.stroke();
+            ctx.setLineDash([]);
 
-            if (baseline) {
-                // Draw Baseline
-                ctx.strokeStyle = "white";
-                ctx.setLineDash([5, 5]);
-                ctx.beginPath();
-                ctx.moveTo(vertex.x, vertex.y);
-                ctx.lineTo(baseline.x, baseline.y);
-                ctx.stroke();
-                ctx.setLineDash([]);
+            // MATH: Calculate angle between baseline and current center
+            const angleBase = Math.atan2(baseline.y - vertex.y, baseline.x - vertex.x);
+            const angleCurrent = Math.atan2(centerY - vertex.y, centerX - vertex.x);
+            
+            let diff = Math.abs((angleCurrent - angleBase) * 180 / Math.PI);
+            if (diff > 180) diff = 360 - diff;
+            currentAngle = diff;
 
-                // Calculation
-                const angle1 = Math.atan2(baseline.y - vertex.y, baseline.x - vertex.x);
-                const angle2 = Math.atan2(centerY - vertex.y, centerX - vertex.x);
-                let diff = Math.abs((angle2 - angle1) * 180 / Math.PI);
-                if (diff > 180) diff = 360 - diff;
-                
-                hud.innerText = diff.toFixed(1) + "°";
+            hud.innerText = diff.toFixed(1) + "°";
 
-                // Draw Arc
-                ctx.beginPath();
-                ctx.strokeStyle = "rgba(0, 255, 0, 0.6)";
-                ctx.lineWidth = 15;
-                ctx.arc(vertex.x, vertex.y, 60, angle1, angle2, (angle2 < angle1));
-                ctx.stroke();
-                
-                // Draw Text Label on Canvas (so it appears in screenshot)
-                ctx.fillStyle = "white";
-                ctx.font = "bold 24px Arial";
-                ctx.fillText(diff.toFixed(1) + "°", vertex.x + 20, vertex.y - 20);
-            }
+            // Draw visual Protractor Arc
+            ctx.beginPath();
+            ctx.strokeStyle = "rgba(0, 255, 0, 0.4)";
+            ctx.lineWidth = 30;
+            ctx.arc(vertex.x, vertex.y, 80, angleBase, angleCurrent, (angleCurrent < angleBase));
+            ctx.stroke();
+            
+            // Text on canvas for screenshot
+            ctx.fillStyle = "white";
+            ctx.font = "bold 30px Arial";
+            ctx.fillText(diff.toFixed(1) + "°", vertex.x + 20, vertex.y - 20);
         }
-        requestAnimationFrame(draw);
     }
+    requestAnimationFrame(draw);
+}
 
-    window.addEventListener('resize', resize);
-    resize();
-    startCamera();
-    draw();
-</script>
+// Start everything
+window.addEventListener('resize', resize);
+resize();
+startCamera();
+draw();
