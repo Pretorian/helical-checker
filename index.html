@@ -3,31 +3,75 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>AI Vane Edge Detector</title>
+    <title>Arrow Build Logger</title>
     <style>
-        body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; position: fixed; width: 100%; height: 100%; }
-        video, #photo-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; z-index: 1; }
+        body { margin: 0; overflow: hidden; background: #000; font-family: -apple-system, sans-serif; position: fixed; width: 100%; height: 100%; }
+        video, #photo-canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; z-index: 1; background: #000; }
         canvas#ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 5; pointer-events: none; }
         #touch-surface { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; touch-action: none; }
-        #hud { position: absolute; top: 40px; width: 100%; text-align: center; color: white; font-size: 18px; font-weight: bold; text-shadow: 2px 2px 8px #000; z-index: 15; }
-        #controls { position: absolute; bottom: 30px; width: 100%; display: flex; justify-content: center; gap: 10px; z-index: 20; }
-        .btn { padding: 15px 20px; border-radius: 25px; border: none; font-weight: bold; box-shadow: 0 4px 10px rgba(0,0,0,0.3); }
+        
+        /* Form Overlay */
+        #data-form { 
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; 
+            background: rgba(0,0,0,0.9); z-index: 100; display: none; color: white;
+            overflow-y: auto; padding: 20px; box-sizing: border-box;
+        }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; font-size: 12px; color: #aaa; margin-bottom: 5px; }
+        input, select { width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #444; background: #222; color: white; font-size: 16px; box-sizing: border-box; }
+        
+        #hud { position: absolute; top: 40px; width: 100%; text-align: center; color: white; font-size: 18px; font-weight: bold; text-shadow: 2px 2px 8px #000; z-index: 15; pointer-events: none; }
+        #controls { position: absolute; bottom: 30px; width: 100%; display: flex; justify-content: center; gap: 8px; z-index: 20; flex-wrap: wrap; }
+        .btn { padding: 12px 16px; border-radius: 20px; border: none; font-weight: bold; font-size: 13px; cursor: pointer; }
         #snap-btn { background: #007AFF; color: white; }
-        #ai-btn { background: #4CD964; color: white; display: none; }
+        #save-btn { background: #FF9500; color: white; display: none; }
+        #reset-btn { background: #ff3b30; color: white; }
     </style>
 </head>
 <body>
 
-    <div id="hud">Align Arrow & Take Photo</div>
+    <div id="hud">Capture Vane to Begin</div>
     <video id="v" autoplay playsinline muted></video>
     <canvas id="photo-canvas" style="display:none;"></canvas>
     <canvas id="ui-layer"></canvas>
     <div id="touch-surface"></div>
+
+    <div id="data-form">
+        <h2 style="margin-top:0">Arrow Specifications</h2>
+        <div class="form-group">
+            <label>Vane Type (e.g. Blazer, AAE)</label>
+            <input type="text" id="vane-type" placeholder="Blazer 2 inch">
+        </div>
+        <div style="display:flex; gap:10px;">
+            <div class="form-group" style="flex:1">
+                <label>Measured Angle (°)</label>
+                <input type="number" id="measured-angle" step="0.1">
+            </div>
+            <div class="form-group" style="flex:1">
+                <label>Style</label>
+                <select id="vane-style"><option>Offset</option><option>Helical</option></select>
+            </div>
+        </div>
+        <div class="form-group">
+            <label>Arrow Model / Spine</label>
+            <input type="text" id="arrow-spine" placeholder="Easton Axis 340">
+        </div>
+        <div style="display:flex; gap:10px;">
+            <div class="form-group" style="flex:1"><label>OD (in)</label><input type="text" id="arrow-od" placeholder=".264"></div>
+            <div class="form-group" style="flex:1"><label>ID (in)</label><input type="text" id="arrow-id" placeholder=".204"></div>
+        </div>
+        <div class="form-group">
+            <label>Length (in)</label>
+            <input type="text" id="arrow-len" placeholder="28.5">
+        </div>
+        <button class="btn" style="width:100%; background:#4CD964; color:black; font-size:18px;" onclick="exportData()">Confirm & Export CSV</button>
+        <button class="btn" style="width:100%; background:transparent; color:#ff3b30; margin-top:10px;" onclick="closeForm()">Cancel</button>
+    </div>
     
     <div id="controls">
         <button id="snap-btn" class="btn">📸 Take Photo</button>
-        <button id="ai-btn" class="btn">🤖 AI Auto-Edge</button>
-        <button id="reset-btn" class="btn" style="background:#ff3b30; color:white;">Reset</button>
+        <button id="save-btn" class="btn">💾 Save Specs</button>
+        <button id="reset-btn" class="btn">Reset</button>
     </div>
 
     <script>
@@ -37,84 +81,84 @@
         const uiCanvas = document.getElementById('ui-layer');
         const uiCtx = uiCanvas.getContext('2d');
         const hud = document.getElementById('hud');
-
-        let points = []; 
-        let isPhotoTaken = false;
+        let points = [], isStatic = false, draggingPoint = null, currentDeg = 0;
 
         navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }).then(s => v.srcObject = s);
 
-        // --- STEP 1: CAPTURE ---
         document.getElementById('snap-btn').onclick = () => {
             pCanvas.width = uiCanvas.width = window.innerWidth;
             pCanvas.height = uiCanvas.height = window.innerHeight;
             pCtx.drawImage(v, 0, 0, pCanvas.width, pCanvas.height);
-            pCanvas.style.display = "block";
-            v.style.display = "none";
-            isPhotoTaken = true;
-            document.getElementById('ai-btn').style.display = "block";
-            hud.innerText = "Photo Captured. Tap AI to find edges.";
+            pCanvas.style.display = "block"; v.style.display = "none";
+            isStatic = true; 
+            document.getElementById('save-btn').style.display = "block";
+            hud.innerText = "Align points, then tap Save";
+            // Default points
+            const w = pCanvas.width, h = pCanvas.height;
+            points = [{x:w*0.5, y:h*0.7}, {x:w*0.5, y:h*0.3}, {x:w*0.55, y:h*0.35}];
         };
 
-        // --- STEP 2: AI EDGE DETECTION ---
-        document.getElementById('ai-btn').onclick = () => {
-            detectEdges();
+        // UI Functions
+        document.getElementById('save-btn').onclick = () => {
+            document.getElementById('measured-angle').value = currentDeg.toFixed(1);
+            document.getElementById('vane-style').value = currentDeg > 2.5 ? "Helical" : "Offset";
+            document.getElementById('data-form').style.display = "block";
         };
 
-        function detectEdges() {
-            const imgData = pCtx.getImageData(0, 0, pCanvas.width, pCanvas.height);
-            const data = imgData.data;
-            const w = pCanvas.width;
-            const h = pCanvas.height;
+        function closeForm() { document.getElementById('data-form').style.display = "none"; }
 
-            // Simplistic Edge Scan: Look for highest contrast change in the middle
-            let foundX = w / 2;
-            let foundY = h / 2;
-
-            // Algorithm scans for the transition from dark shaft to light vane
-            // In a real app, this would use a Sobel Filter or Canny algorithm
-            points = [
-                { x: w * 0.5, y: h * 0.7 }, // Base
-                { x: w * 0.5, y: h * 0.3 }, // Top (Axis)
-                { x: w * 0.55, y: h * 0.35 } // Vane edge
-            ];
-            
-            hud.innerText = "Edges Detected. Drag to fine-tune.";
+        function exportData() {
+            const data = {
+                vane: document.getElementById('vane-type').value,
+                angle: document.getElementById('measured-angle').value,
+                style: document.getElementById('vane-style').value,
+                arrow: document.getElementById('arrow-spine').value,
+                od: document.getElementById('arrow-od').value,
+                id: document.getElementById('arrow-id').value,
+                len: document.getElementById('arrow-len').value
+            };
+            alert("Configuration Saved!\n" + JSON.stringify(data, null, 2));
+            closeForm();
         }
+
+        // Interaction (Simplified for clarity)
+        const surface = document.getElementById('touch-surface');
+        surface.addEventListener('pointerdown', (e) => {
+            if (!isStatic) return;
+            const hitIndex = points.findIndex(p => Math.hypot(p.x - e.clientX, p.y - e.clientY) < 40);
+            if (hitIndex !== -1) draggingPoint = hitIndex;
+        });
+        surface.addEventListener('pointermove', (e) => {
+            if (draggingPoint !== null) { points[draggingPoint].x = e.clientX; points[draggingPoint].y = e.clientY; }
+        });
+        surface.addEventListener('pointerup', () => draggingPoint = null);
+        document.getElementById('reset-btn').onclick = () => location.reload();
 
         function draw() {
             uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
             if (points.length === 3) {
-                const [p1, p2, p3] = points;
-
-                // Draw Reference Axis (Shaft)
-                uiCtx.strokeStyle = "rgba(255,255,255,0.5)";
-                uiCtx.setLineDash([5, 5]);
-                uiCtx.beginPath(); uiCtx.moveTo(p1.x, p1.y); uiCtx.lineTo(p2.x, p2.y); uiCtx.stroke();
-
-                // Draw Vane Angle
-                uiCtx.setLineDash([]);
-                uiCtx.strokeStyle = "#4CD964";
-                uiCtx.lineWidth = 4;
-                uiCtx.beginPath(); uiCtx.moveTo(p1.x, p1.y); uiCtx.lineTo(p3.x, p3.y); uiCtx.stroke();
-
-                // Math
-                const a1 = Math.atan2(p2.y - p1.y, p2.x - p1.x);
-                const a2 = Math.atan2(p3.y - p1.y, p3.x - p1.x);
-                let deg = Math.abs((a2 - a1) * 180 / Math.PI);
+                const [p0, p1, p2] = points;
+                uiCtx.strokeStyle = "rgba(255,255,255,0.5)"; uiCtx.setLineDash([5,5]);
+                uiCtx.beginPath(); uiCtx.moveTo(p0.x, p0.y); uiCtx.lineTo(p1.x, p1.y); uiCtx.stroke();
+                uiCtx.setLineDash([]); uiCtx.strokeStyle = "#4CD964"; uiCtx.lineWidth = 4;
+                uiCtx.beginPath(); uiCtx.moveTo(p0.x, p0.y); uiCtx.lineTo(p2.x, p2.y); uiCtx.stroke();
                 
-                uiCtx.fillStyle = "white";
-                uiCtx.font = "bold 24px Arial";
-                uiCtx.fillText("Offset: " + deg.toFixed(1) + "°", p1.x + 20, p1.y - 40);
+                const a1 = Math.atan2(p1.y - p0.y, p1.x - p0.x);
+                const a2 = Math.atan2(p2.y - p0.y, p2.x - p0.x);
+                currentDeg = Math.abs((a2 - a1) * 180 / Math.PI);
+                if (currentDeg > 180) currentDeg = 360 - currentDeg;
                 
-                // Helical Check (Simple logic: if line is curved)
-                let helicalStr = deg > 3 ? "High Helical" : "Standard Offset";
-                hud.innerText = "Analysis: " + helicalStr;
+                uiCtx.fillStyle = "white"; uiCtx.font = "bold 24px Arial";
+                uiCtx.fillText(currentDeg.toFixed(1) + "°", p0.x + 30, p0.y - 30);
             }
+            points.forEach((p, i) => {
+                uiCtx.fillStyle = i === 0 ? "red" : (i === 1 ? "blue" : "green");
+                uiCtx.beginPath(); uiCtx.arc(p.x, p.y, 12, 0, 7); uiCtx.fill();
+            });
             requestAnimationFrame(draw);
         }
-
-        document.getElementById('reset-btn').onclick = () => location.reload();
-        draw();
+        window.onresize = () => { uiCanvas.width = pCanvas.width = window.innerWidth; uiCanvas.height = pCanvas.height = window.innerHeight; };
+        window.onresize(); draw();
     </script>
 </body>
 </html>
