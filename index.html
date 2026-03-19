@@ -3,128 +3,169 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>3-Tap AR Triangle</title>
+    <title>Vane Angle Analyzer</title>
     <style>
         body { margin: 0; overflow: hidden; background: #000; font-family: sans-serif; position: fixed; width: 100%; height: 100%; }
-        video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; z-index: 1; }
-        canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 2; pointer-events: none; }
+        video, #captured-image { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; z-index: 1; }
+        canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 5; pointer-events: none; }
+        #touch-surface { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; touch-action: none; }
         
-        /* Transparent layer to catch taps at specific screen coordinates */
-        #touch-surface { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; }
-
         #hud { 
             position: absolute; top: 40px; width: 100%; text-align: center; 
-            color: white; font-size: 22px; font-weight: bold; text-shadow: 2px 2px 8px #000; z-index: 15; pointer-events: none;
+            color: white; font-size: 18px; font-weight: bold; text-shadow: 2px 2px 8px #000; z-index: 15; pointer-events: none;
         }
+        
         #controls {
             position: absolute; bottom: 30px; width: 100%; display: flex; 
-            justify-content: center; z-index: 20;
+            justify-content: center; gap: 10px; z-index: 20;
         }
         .btn {
-            padding: 15px 30px; background: #ff3b30; color: white; border-radius: 30px;
-            border: none; font-weight: bold; box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+            padding: 12px 20px; border-radius: 25px; border: none; font-weight: bold;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3); font-size: 14px;
         }
+        #snap-btn { background: #007AFF; color: white; }
+        #reset-btn { background: #ff3b30; color: white; }
+        .hidden { display: none; }
     </style>
 </head>
 <body>
 
-    <div id="hud">Tap 1: Set Corner (Vertex)</div>
+    <div id="hud">Step 1: Point at Vane and Take Photo</div>
+    
     <video id="v" autoplay playsinline muted></video>
-    <canvas id="c"></canvas>
+    
+    <canvas id="photo-canvas" class="hidden"></canvas>
+    
+    <canvas id="ui-canvas"></canvas>
+    
     <div id="touch-surface"></div>
     
     <div id="controls">
-        <button id="reset-btn" class="btn">Clear & Reset</button>
+        <button id="snap-btn" class="btn">📸 Take Photo</button>
+        <button id="reset-btn" class="btn">Reset</button>
     </div>
 
     <script>
         const v = document.getElementById('v');
-        const c = document.getElementById('c');
-        const ctx = c.getContext('2d');
+        const uiCanvas = document.getElementById('ui-canvas');
+        const uiCtx = uiCanvas.getContext('2d');
+        const photoCanvas = document.getElementById('photo-canvas');
+        const photoCtx = photoCanvas.getContext('2d');
         const hud = document.getElementById('hud');
-        
-        let points = []; // Array to store {x, y} coordinates
+        const snapBtn = document.getElementById('snap-btn');
 
-        // 1. Camera Access
-        navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
-            .then(s => v.srcObject = s)
-            .catch(err => hud.innerText = "Camera error. Use HTTPS.");
+        let points = []; 
+        let draggingPoint = null;
+        let isPhotoTaken = false;
+        const hitRadius = 40;
 
-        // 2. Handle Taps at specific coordinates
-        document.getElementById('touch-surface').addEventListener('pointerdown', (e) => {
-            if (points.length >= 3) return; // Wait for reset
+        // Start Camera
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } }).then(s => v.srcObject = s);
 
-            // Get exact coordinates of the tap
-            const rect = v.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
+        function resize() {
+            uiCanvas.width = photoCanvas.width = window.innerWidth;
+            uiCanvas.height = photoCanvas.height = window.innerHeight;
+        }
 
-            points.push({ x, y });
+        // --- STEP 1: CAPTURE PHOTO ---
+        snapBtn.onclick = () => {
+            if (!isPhotoTaken) {
+                // Freeze Frame
+                photoCtx.drawImage(v, 0, 0, photoCanvas.width, photoCanvas.height);
+                photoCanvas.classList.remove('hidden');
+                v.classList.add('hidden');
+                isPhotoTaken = true;
+                snapBtn.innerText = "🔄 Retake";
+                hud.innerText = "Step 2: Tap 3 points to measure";
+            } else {
+                // Reset to Live Camera
+                photoCanvas.classList.add('hidden');
+                v.classList.remove('hidden');
+                isPhotoTaken = false;
+                points = [];
+                snapBtn.innerText = "📸 Take Photo";
+                hud.innerText = "Step 1: Point at Vane and Take Photo";
+            }
+        };
 
-            if (points.length === 1) hud.innerText = "Tap 2: Set Baseline End";
-            else if (points.length === 2) hud.innerText = "Tap 3: Set Angle End";
-            else if (points.length === 3) hud.innerText = "Triangle Complete";
+        // --- STEP 2: MANIPULATE TRIANGLE ---
+        const surface = document.getElementById('touch-surface');
+        surface.addEventListener('pointerdown', (e) => {
+            if (!isPhotoTaken) return; // Only allow drawing on the photo
+
+            const x = e.clientX;
+            const y = e.clientY;
+
+            const hitIndex = points.findIndex(p => Math.hypot(p.x - x, p.y - y) < hitRadius);
+            
+            if (hitIndex !== -1) {
+                draggingPoint = hitIndex;
+            } else if (points.length < 3) {
+                points.push({ x, y });
+            }
         });
+
+        surface.addEventListener('pointermove', (e) => {
+            if (draggingPoint !== null) {
+                points[draggingPoint].x = e.clientX;
+                points[draggingPoint].y = e.clientY;
+            }
+        });
+
+        surface.addEventListener('pointerup', () => { draggingPoint = null; });
 
         document.getElementById('reset-btn').onclick = () => {
             points = [];
-            hud.innerText = "Tap 1: Set Corner (Vertex)";
+            hud.innerText = isPhotoTaken ? "Tap 3 points to measure" : "Step 1: Take Photo";
         };
 
         function draw() {
-            ctx.clearRect(0, 0, c.width, c.height);
+            uiCtx.clearRect(0, 0, uiCanvas.width, uiCanvas.height);
             
-            // Draw points and connections
-            ctx.lineWidth = 3;
-            ctx.strokeStyle = "white";
-            
-            points.forEach((p, i) => {
-                ctx.fillStyle = i === 0 ? "red" : "white"; // Corner is red
-                ctx.beginPath();
-                ctx.arc(p.x, p.y, 8, 0, Math.PI * 2);
-                ctx.fill();
-            });
-
             if (points.length >= 2) {
-                ctx.beginPath();
-                ctx.moveTo(points[0].x, points[0].y);
-                ctx.lineTo(points[1].x, points[1].y);
-                ctx.stroke();
+                uiCtx.lineWidth = 3;
+                uiCtx.strokeStyle = "cyan";
+                uiCtx.beginPath();
+                uiCtx.moveTo(points[0].x, points[0].y);
+                uiCtx.lineTo(points[1].x, points[1].y);
+                if (points.length === 3) {
+                    uiCtx.lineTo(points[2].x, points[2].y);
+                    uiCtx.lineTo(points[0].x, points[0].y);
+                    uiCtx.fillStyle = "rgba(0, 255, 255, 0.2)";
+                    uiCtx.fill();
+                }
+                uiCtx.stroke();
             }
 
+            points.forEach((p, i) => {
+                uiCtx.fillStyle = i === 0 ? "#ff3b30" : "white";
+                uiCtx.beginPath();
+                uiCtx.arc(p.x, p.y, 12, 0, Math.PI * 2);
+                uiCtx.fill();
+                uiCtx.strokeStyle = "black";
+                uiCtx.stroke();
+            });
+
             if (points.length === 3) {
-                // Draw the full triangle
-                ctx.beginPath();
-                ctx.moveTo(points[1].x, points[1].y);
-                ctx.lineTo(points[2].x, points[2].y);
-                ctx.lineTo(points[0].x, points[0].y);
-                ctx.fillStyle = "rgba(0, 255, 0, 0.3)";
-                ctx.fill();
-                ctx.stroke();
-
-                // Calculate the angle at Points[0] (the vertex)
-                const p1 = points[0];
-                const p2 = points[1];
-                const p3 = points[2];
-
-                const angle1 = Math.atan2(p2.y - p1.y, p2.x - p1.x);
-                const angle2 = Math.atan2(p3.y - p1.y, p3.x - p1.x);
-                
-                let deg = Math.abs((angle2 - angle1) * 180 / Math.PI);
+                const p1 = points[0], p2 = points[1], p3 = points[2];
+                const a1 = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+                const a2 = Math.atan2(p3.y - p1.y, p3.x - p1.x);
+                let deg = Math.abs((a2 - a1) * 180 / Math.PI);
                 if (deg > 180) deg = 360 - deg;
 
-                // Display result
-                hud.innerText = "Result: " + deg.toFixed(1) + "°";
-                ctx.fillStyle = "white";
-                ctx.font = "bold 24px Arial";
-                ctx.fillText(deg.toFixed(1) + "°", p1.x + 20, p1.y - 20);
+                hud.innerText = "Vane Angle: " + deg.toFixed(1) + "°";
+                uiCtx.fillStyle = "white";
+                uiCtx.font = "bold 28px Arial";
+                uiCtx.shadowBlur = 10; uiCtx.shadowColor = "black";
+                uiCtx.fillText(deg.toFixed(1) + "°", p1.x + 20, p1.y - 20);
+                uiCtx.shadowBlur = 0;
             }
 
             requestAnimationFrame(draw);
         }
 
-        window.onresize = () => { c.width = window.innerWidth; c.height = window.innerHeight; };
-        window.onresize();
+        window.onresize = resize;
+        resize();
         draw();
     </script>
 </body>
